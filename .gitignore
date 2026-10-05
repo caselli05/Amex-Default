@@ -1,0 +1,14 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+*.pkl
+*.pt
+*.joblib
+*.db
+data/
+
+amex_project.egg-info/
+notebooks/
+mlruns/

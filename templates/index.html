@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Amex Default</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { margin-bottom: .25rem; }
+    .muted { color: #666; font-size: .9rem; }
+    #status { display: inline-block; padding: .15rem .6rem; border-radius: 1rem; font-size: .85rem; }
+    .ok { background: #dff3e4; color: #1b6b34; }
+    .bad { background: #fbe1e1; color: #8a1c1c; }
+    #drop { border: 2px dashed #bbb; border-radius: .5rem; padding: 1.5rem; text-align: center; cursor: pointer; }
+    #drop.over { border-color: #2a78d6; background: #f0f6fd; }
+    #filename { font-weight: 600; }
+    button { margin: .75rem .5rem .5rem 0; padding: .45rem 1rem; cursor: pointer; }
+    button:disabled { cursor: default; opacity: .5; }
+    .table-wrap { overflow-x: auto; max-height: 32rem; overflow-y: auto; margin-top: .5rem; }
+    table { border-collapse: collapse; }
+    th, td { border: 1px solid #ddd; padding: .3rem .8rem; text-align: left; font-variant-numeric: tabular-nums; }
+    th { position: sticky; top: 0; background: #f6f6f6; }
+    td.num { text-align: right; }
+    #amex { border: 1px solid #ddd; border-radius: .5rem; padding: .75rem 1rem; margin: 1rem 0; }
+    #amex h2 { font-size: 1rem; margin: 0 0 .25rem; }
+    #amex .value { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    #amex .value.none { color: #888; }
+    pre.error { background: #fbe1e1; color: #8a1c1c; padding: .6rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Amex Default prediction</h1>
+  <p>Model: <span id="status">checking…</span></p>
+
+  <p class="muted">
+    Upload a CSV of statement rows with a header line. Columns are matched by name: the model's
+    <a href="/features">188 features</a> must all be there (any order); other columns are ignored, and
+    <code>customer_ID</code> / <code>S_2</code>, if present, are shown next to the predictions.
+    Empty cells are missing values. You get one probability of default per row.
+    If the CSV has a <code>target</code> column (0/1), the Amex score of the predictions is computed too.
+  </p>
+
+  <div id="drop">
+    <input type="file" id="file" accept=".csv,text/csv" hidden>
+    <div id="filename">Click to choose a CSV, or drop it here</div>
+  </div>
+  <button id="predict" disabled>Predict</button>
+  <button id="download" hidden>Download results (CSV)</button>
+
+  <div id="output"></div>
+
+  <script>
+    const MAX_SHOWN = 1000;
+    const fileInput = document.getElementById('file');
+    const drop = document.getElementById('drop');
+    const predictBtn = document.getElementById('predict');
+    const downloadBtn = document.getElementById('download');
+    const output = document.getElementById('output');
+    let file = null, results = null;
+
+    function setFile(f) {
+      file = f;
+      document.getElementById('filename').textContent = f ? `${f.name} (${(f.size / 1e6).toFixed(1)} MB)` : '';
+      predictBtn.disabled = !f;
+    }
+
+    function showError(error, message) {
+      output.innerHTML = '';
+      const pre = document.createElement('pre');
+      pre.className = 'error';
+      pre.textContent = `${error}: ${message}`;
+      output.appendChild(pre);
+    }
+
+    async function checkHealth() {
+      const status = document.getElementById('status');
+      try {
+        const body = await (await fetch('/health')).json();
+        status.textContent = body.model_loaded ? 'loaded' : `not loaded (${body.model_path})`;
+        status.className = body.model_loaded ? 'ok' : 'bad';
+      } catch (e) {
+        status.textContent = 'server unreachable';
+        status.className = 'bad';
+      }
+    }
+
+    drop.onclick = () => fileInput.click();
+    fileInput.onchange = () => setFile(fileInput.files[0] || null);
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); setFile(e.dataTransfer.files[0] || null); };
+
+    predictBtn.onclick = async () => {
+      const form = new FormData();
+      form.append('file', file);
+      predictBtn.disabled = true;
+      downloadBtn.hidden = true;
+      output.innerHTML = '<p class="muted">Predicting…</p>';
+      try {
+        const res = await fetch('/predict_csv', { method: 'POST', body: form });
+        let body;
+        try { body = await res.json(); }
+        catch (e) { return showError(`HTTP ${res.status}`, res.status === 413 ? 'file too large' : res.statusText); }
+        if (!res.ok) return showError(body.error, body.message);
+        results = body;
+        render(body);
+        downloadBtn.hidden = false;
+      } catch (e) {
+        showError('Network error', e.message);
+      } finally {
+        predictBtn.disabled = !file;
+      }
+    };
+
+    function render(body) {
+      const idCols = Object.keys(body.ids);
+      const hasTarget = body.target !== null;
+      const n = body.predictions.length;
+      const shown = Math.min(n, MAX_SHOWN);
+      const table = document.createElement('table');
+      const head = table.insertRow();
+      for (const name of ['row', ...idCols, ...(hasTarget ? ['target'] : []), 'probability of default']) {
+        const th = document.createElement('th');
+        th.textContent = name;
+        head.appendChild(th);
+      }
+      for (let i = 0; i < shown; i++) {
+        const tr = table.insertRow();
+        tr.insertCell().textContent = i;
+        for (const c of idCols) tr.insertCell().textContent = body.ids[c][i] ?? '';
+        if (hasTarget) tr.insertCell().textContent = body.target[i] ?? '';
+        const td = tr.insertCell();
+        td.className = 'num';
+        td.textContent = body.predictions[i].toFixed(4);
+      }
+      output.innerHTML = amexSection(body) + `<p class="muted">${n} rows scored from ${body.filename}` +
+        (n > shown ? `; showing the first ${shown}, download for all.` : '.') + '</p>';
+      const wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      wrap.appendChild(table);
+      output.appendChild(wrap);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
+    function amexSection(body) {
+      const score = body.amex_score;
+      const value = score === null ? '<span class="value none">none</span>'
+                                   : `<span class="value">${score.toFixed(5)}</span>`;
+      return `<section id="amex"><h2>amex-score</h2>${value}` +
+             `<div class="muted">${escapeHtml(body.amex_score_info)}</div></section>`;
+    }
+
+    downloadBtn.onclick = () => {
+      const idCols = Object.keys(results.ids);
+      const hasTarget = results.target !== null;
+      const quote = v => (v == null ? '' : /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : v);
+      const lines = [[...idCols, ...(hasTarget ? ['target'] : []), 'prediction'].join(',')];
+      results.predictions.forEach((p, i) => lines.push([...idCols.map(c => quote(results.ids[c][i])),
+        ...(hasTarget ? [quote(results.target[i])] : []), p].join(',')));
+      const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = results.filename.replace(/\.csv$/i, '') + '_predictions.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    checkHealth();
+  </script>
+</body>
+</html>
