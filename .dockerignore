@@ -1,0 +1,15 @@
+# Keep the build context small: only requirements.txt, app.py, templates/ and src/ are copied
+.git
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+*.egg-info
+.env
+data
+notebooks
+mlruns
+mlflow.db
+Dockerfile
+.dockerignore
