@@ -4,7 +4,7 @@
 # Build:  docker build -t amex-default .
 # Run:    docker run --rm -p 5000:5000 amex-default   ->  http://localhost:5000
 #
-# The model pkl (src/models/lightgbm.pkl) is git-ignored, so it must exist locally before building.
+# The model pkl (src/models/lightgbm.pkl) is committed and copied in with src/, so a fresh clone builds a working image.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
