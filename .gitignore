@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .env
 *.pkl
+!src/models/lightgbm.pkl
 *.pt
 *.joblib
 *.db
